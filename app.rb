@@ -25,10 +25,12 @@
 # those of the authors and should not be interpreted as representing official
 # policies, either expressed or implied, of Salvatore Sanfilippo.
 
+$:.unshift File.dirname(__FILE__) + '/../redis-rb-cluster'
+
 require_relative 'app_config'
 require 'rubygems'
 require 'hiredis'
-require 'redis'
+require 'cluster'
 require_relative 'page'
 require 'sinatra'
 require 'json'
@@ -44,9 +46,7 @@ require 'uri'
 Version = "0.11.0"
 
 def setup_redis(uri=RedisURL)
-    uri = URI.parse(uri)
-    $r = Redis.new(:host => uri.host, :port => uri.port, :password => uri.password) unless $r
-end
+    $r = RedisCluster.new(uri, uri.count) unless $r end
 
 before do
     setup_redis
@@ -521,10 +521,10 @@ end
 get "/user/:username" do
     user = get_user_by_username(params[:username])
     halt(404,"Non existing user") if !user
-    posted_news,posted_comments = $r.pipelined {
-        $r.zcard("user.posted:#{user['id']}")
+    posted_news,posted_comments = [
+        $r.zcard("user.posted:#{user['id']}"),
         $r.zcard("user.comments:#{user['id']}")
-    }
+    ]
     H.set_title "#{user['username']} - #{SiteName}"
     owner = $user && ($user['id'].to_i == user['id'].to_i)
     H.page {
@@ -1343,11 +1343,9 @@ def get_news_by_id(news_ids,opt={})
         opt[:single] = true
         news_ids = [news_ids]
     end
-    news = $r.pipelined {
-        news_ids.each{|nid|
+    news = news_ids.map{|nid|
             $r.hgetall("news:#{nid}")
         }
-    }
     return [] if !news # Can happen only if news_ids is an empty array.
 
     # Remove empty elements
@@ -1357,19 +1355,15 @@ def get_news_by_id(news_ids,opt={})
     end
 
     # Get all the news
-    $r.pipelined {
-        news.each{|n|
-            # Adjust rank if too different from the real-time value.
-            update_news_rank_if_needed(n) if opt[:update_rank]
-            result << n
-        }
+    news.map{|n|
+        # Adjust rank if too different from the real-time value.
+        update_news_rank_if_needed(n) if opt[:update_rank]
+        result << n
     }
 
     # Get the associated users information
-    usernames = $r.pipelined {
-        result.each{|n|
-            $r.hget("user:#{n["user_id"]}","username")
-        }
+    usernames = result.map{|n|
+        $r.hget("user:#{n["user_id"]}","username")
     }
     result.each_with_index{|n,i|
         n["username"] = usernames[i]
@@ -1378,11 +1372,9 @@ def get_news_by_id(news_ids,opt={})
     # Load $User vote information if we are in the context of a
     # registered user.
     if $user
-        votes = $r.pipelined {
-            result.each{|n|
-                $r.zscore("news.up:#{n["id"]}",$user["id"])
-                $r.zscore("news.down:#{n["id"]}",$user["id"])
-            }
+        votes = result.map{|n|
+            $r.zscore("news.up:#{n["id"]}",$user["id"])
+            $r.zscore("news.down:#{n["id"]}",$user["id"])
         }
         result.each_with_index{|n,i|
             if votes[i*2]
@@ -2022,10 +2014,11 @@ end
 ###############################################################################
 
 def generate_site_stats
+    t = $r.get_random_connection
     H.ul {
         H.li {"#{$r.get("users.count")} users"} +
         H.li {"#{$r.zcard("news.cron")} news posted"} +
-        H.li {"#{$r.info['used_memory_human']} of used memory"}
+        H.li {"redis mode: #{t.send("info")['redis_mode']}"}
     }
 end
 
