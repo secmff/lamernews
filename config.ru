@@ -1,4 +1,8 @@
 $LOAD_PATH.unshift File.dirname(__FILE__)
-require './app'
+require 'rubygems'
+require 'bundler'
 
+Bundler.require
+
+require './app'
 run Sinatra::Application

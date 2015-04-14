@@ -7,6 +7,7 @@ gem 'redis','~> 3.0.4'
 gem 'hiredis', '~> 0.4.5'
 gem 'json', '~> 1.7.7'
 gem 'ruby-hmac', '~> 0.4.0'
+gem 'redis-rb-cluster', :git => 'https://github.com/secmff/redis-rb-cluster.git'
 
 group :development, :test do
   gem 'rake'
